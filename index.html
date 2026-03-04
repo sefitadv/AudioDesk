@@ -67,6 +67,16 @@
   .badge.messa-onda{background:var(--green-light);color:var(--green)}
   .badge.completato{background:var(--surface2);color:var(--text3)}
   .badge.urgente{background:var(--red-light);color:var(--red)}
+  .badge.annullato{background:#F5F5F5;color:#999;text-decoration:line-through}
+  .margin-chip{font-size:11px;font-weight:600;padding:2px 7px;border-radius:4px;font-family:'DM Mono',monospace}
+  .margin-pos{background:var(--green-light);color:var(--green)}
+  .margin-neg{background:var(--red-light);color:var(--red)}
+  .sollecito-alert{background:#FFF8E1;border:1px solid #FFD54F;border-radius:8px;padding:10px 14px;margin-bottom:6px;display:flex;align-items:center;gap:10px}
+  .snap-voci{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+  .calc-dir-box{background:var(--surface);border-radius:6px;padding:10px 12px;display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;font-size:12px}
+  .task-actions{display:flex;gap:4px;flex-shrink:0}
+  input[type=time]{background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:8px 10px;font-family:'DM Mono',monospace;font-size:13px;color:var(--text);outline:none;transition:border-color .15s;width:100%}
+  input[type=time]:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-light)}
   .progress-bar{height:4px;background:var(--border);border-radius:4px;overflow:hidden;margin-bottom:12px}
   .progress-fill{height:100%;border-radius:4px;background:var(--accent);transition:width .3s}
   .card-footer{display:flex;align-items:center;justify-content:space-between}
@@ -411,10 +421,7 @@
 <!-- ═══ MODAL: TASK CON ORARIO ════════════════════════════ -->
 <div class="modal-overlay hidden" id="modal-task">
   <div class="modal" style="max-width:480px">
-    <div class="modal-header">
-      <div class="modal-title">Aggiungi Task</div>
-      <button class="btn-close" onclick="document.getElementById('modal-task').classList.add('hidden')">✕</button>
-    </div>
+    <div class="modal-header"><div class="modal-title" id="modal-task-title">Aggiungi Task</div><button class="btn-close" onclick="document.getElementById('modal-task').classList.add('hidden')">✕</button></div>
     <div class="modal-body">
       <div class="form-grid">
         <div class="form-group full">
@@ -513,7 +520,42 @@
   </div>
 </div>
 
-<!-- ═══ CAL POPUP ═════════════════════════════════════════ -->
+<!-- ═══ MODAL FATTURA ════════════════════════════════════ -->
+<div class="modal-overlay hidden" id="modal-fattura">
+  <div class="modal" style="max-width:520px">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-fatt-title">Nuova Fattura</div>
+      <button class="btn-close" onclick="document.getElementById('modal-fattura').classList.add('hidden')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="form-group"><label>Numero Fattura</label><input type="text" id="fatt-num" placeholder="es. 001/2025"></div>
+        <div class="form-group"><label>Data Emissione</label><input type="date" id="fatt-date"></div>
+        <div class="form-group full"><label>Descrizione</label><input type="text" id="fatt-desc" value="Produzione audio pubblicitaria"></div>
+        <div class="form-group"><label>Importo (€) *</label><input type="number" id="fatt-imp" placeholder="0"></div>
+        <div class="form-group"><label>Stato</label>
+          <select id="fatt-stato">
+            <option value="attesa">⏳ In attesa di pagamento</option>
+            <option value="pagata">✓ Pagata</option>
+            <option value="annullata">✗ Annullata</option>
+          </select>
+        </div>
+        <div class="form-group full">
+          <label>🔔 Data sollecito pagamento</label>
+          <input type="date" id="fatt-sollecito">
+          <div style="font-size:11px;color:var(--text3);margin-top:3px">Un alert apparirà in dashboard e nella scheda progetto a partire da questa data se la fattura è ancora in attesa.</div>
+        </div>
+        <div class="form-group full"><label>Note</label><input type="text" id="fatt-note" placeholder="es. Acconto 50%, saldo entro 30 giorni..."></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="document.getElementById('modal-fattura').classList.add('hidden')">Annulla</button>
+      <button class="btn btn-primary" onclick="saveFattura()">Salva Fattura</button>
+    </div>
+  </div>
+</div>
+
+
 <div id="cal-popup" class="cal-popup" style="display:none">
   <button class="cal-popup-close" onclick="document.getElementById('cal-popup').style.display='none'">✕</button>
   <div class="cal-popup-title" id="cp-title"></div>
@@ -547,10 +589,16 @@ let calCurrentDate = new Date();
 let calGoogleEvents = [];
 let calEvColor = '7';
 let _taskModalPid = null;
+let _taskModalIdx = null; // null = new, number = edit
+let _fattModalPid = null;
+let _fattModalIdx = null;
 const CAL_COLORS = {
   '1':'#7986CB','2':'#33B679','3':'#8E24AA','4':'#E67C73',
   '5':'#F6BF26','6':'#F4511E','7':'#039BE5','11':'#DC2127'
 };
+// Percentuali ENPALS parametrizzabili
+const ENPALS_DIRITTI = 0.15;  // 15% su cachet diritti
+const ENPALS_CONV    = 0.23;  // 23% su convocazione attore
 
 // ── UTILS ──────────────────────────────────────────────────
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2); }
@@ -564,6 +612,29 @@ function save(){ try{ localStorage.setItem('audiodesk_db',JSON.stringify(DB)); }
 function load(){
   try{ const d=localStorage.getItem('audiodesk_db'); if(d) DB=JSON.parse(d); }catch(e){}
   if(!DB.localEvents) DB.localEvents=[];
+  // Migrazione campi nuovi su dati esistenti
+  DB.projects.forEach(p=>{
+    if(!p.casting) p.casting=[];
+    if(!p.quotazioni_diritti) p.quotazioni_diritti=[];
+    // migra vecchi attori in casting se non ancora fatto
+    if((p.attori||[]).length && !p.casting.length){
+      p.attori.forEach(a=>{
+        const act=DB.actors.find(x=>x.id===a.actor_id);
+        p.casting.push({id:uid(),nome:act?act.nome+' '+act.cognome:a.nome_libero||'',data_invio:'',note:'',actor_id:a.actor_id||null});
+      });
+    }
+    // migra vecchi attori in quotazioni_diritti
+    if((p.attori||[]).length && !p.quotazioni_diritti.length){
+      p.attori.filter(a=>a.cachet||a.diritti_scadenza).forEach(a=>{
+        const act=DB.actors.find(x=>x.id===a.actor_id);
+        p.quotazioni_diritti.push({id:uid(),nome_attore:act?act.nome+' '+act.cognome:a.nome_libero||'',cachet:a.cachet||0,richiesto_cliente:0,stato:a.diritti_status==='ok'?'approvata':'trattativa',scadenza:a.diritti_scadenza||'',note:'',_cal_id:a._cal_diritti||null});
+      });
+    }
+    // migra voci senza campo costo
+    (p.voci||[]).forEach(v=>{ if(v.costo===undefined) v.costo=0; });
+    // migra fatture senza campo stato
+    (p.fatture||[]).forEach(f=>{ if(!f.stato) f.stato = f.pagato ? 'pagata' : 'attesa'; });
+  });
   // Load config from localStorage override
   try{
     const c=localStorage.getItem('audiodesk_cfg');
@@ -726,6 +797,8 @@ async function manualSync(){
   if(!gSignedIn){ toast('Connetti prima Google'); handleGoogleAuth(); return; }
   await syncToDrive();
   await syncAllToCalendar();
+  await checkDeletedOnCalendar();
+  if(DB.currentView==='calendario') loadCalendarEvents();
 }
 
 function saveAndSync(){
@@ -785,13 +858,23 @@ async function syncAllToCalendar(){
   let count=0;
   for(const p of DB.projects){
     if(p.step>=6) continue;
+    // Scadenza progetto
     if(p.deadline){ p._cal_deadline=await upsertEvent(`🎙 SCADENZA: ${p.titolo}`,`Cliente: ${p.cliente}\nStep: ${STEPS[p.step]}`,p.deadline,'11',p._cal_deadline||null); count++; }
+    // Task
     for(const t of (p.tasks||[])){
       if(t.due&&!t.done){
         t._cal_id=await upsertEvent(`✅ ${t.text}`,`Progetto: ${p.titolo}${t.note?'\n'+t.note:''}`,t.due,'5',t._cal_id||null,t.startTime||null,t.endTime||null);
         count++;
       }
     }
+    // Quotazioni diritti approvate con scadenza
+    for(const q of (p.quotazioni_diritti||[])){
+      if(q.stato==='approvata'&&q.scadenza){
+        q._cal_id=await upsertEvent(`⚠ DIRITTI: ${q.nome_attore} — ${p.titolo}`,`Progetto: ${p.titolo}\n${q.note||''}`,q.scadenza,'6',q._cal_id||null);
+        count++;
+      }
+    }
+    // Legacy attori
     for(const a of (p.attori||[])){
       if(a.diritti_scadenza&&a.diritti_status!=='ok'){
         const act=DB.actors.find(x=>x.id===a.actor_id);
@@ -808,6 +891,40 @@ async function syncAllToCalendar(){
   save();
   if(count>0) toast(`📅 ${count} event${count===1?'o':'i'} aggiornati su Calendar`);
 }
+
+// ── SYNC BIDIREZIONALE — rileva eliminazioni su Google Calendar ──
+async function checkDeletedOnCalendar(){
+  if(!gSignedIn) return;
+  // Raccoglie tutti gli ID Calendar noti nel DB
+  const toCheck=[];
+  DB.projects.forEach(p=>{
+    (p.tasks||[]).forEach((t,ti)=>{ if(t._cal_id) toCheck.push({type:'task',pid:p.id,idx:ti,id:t._cal_id}); });
+    (p.quotazioni_diritti||[]).forEach((q,qi)=>{ if(q._cal_id) toCheck.push({type:'diritti',pid:p.id,idx:qi,id:q._cal_id}); });
+  });
+  (DB.localEvents||[]).forEach((ev,ei)=>{ if(ev._cal_id) toCheck.push({type:'localEvent',idx:ei,id:ev._cal_id}); });
+  let deleted=0;
+  for(const item of toCheck){
+    try{
+      await gapi.client.calendar.events.get({calendarId:calId(),eventId:item.id});
+    }catch(e){
+      if(e.status===404||e.result?.error?.code===404){
+        // Evento eliminato su Google → rimuovi riferimento nel DB
+        if(item.type==='task'){
+          const p=DB.projects.find(x=>x.id===item.pid);
+          if(p&&p.tasks[item.idx]) p.tasks[item.idx]._cal_id=null;
+        } else if(item.type==='diritti'){
+          const p=DB.projects.find(x=>x.id===item.pid);
+          if(p&&p.quotazioni_diritti[item.idx]) p.quotazioni_diritti[item.idx]._cal_id=null;
+        } else if(item.type==='localEvent'){
+          if(DB.localEvents[item.idx]) DB.localEvents[item.idx]._cal_id=null;
+        }
+        deleted++;
+      }
+    }
+  }
+  if(deleted>0){ save(); toast(`🔄 ${deleted} event${deleted===1?'o':'i'} rimoss${deleted===1?'o':'i'} da Google Calendar aggiornati nel gestionale`); renderView(); }
+}
+
 
 // ── EXPORT / IMPORT ────────────────────────────────────────
 function exportData(){
@@ -857,7 +974,11 @@ function updateBadges(){
   document.getElementById('badge-progetti').textContent=DB.projects.filter(p=>p.step<6).length;
   document.getElementById('badge-attori').textContent=DB.actors.length;
   const today=new Date().toISOString().split('T')[0];
-  let cnt=0; DB.projects.forEach(p=>(p.attori||[]).forEach(a=>{if(a.diritti_scadenza&&a.diritti_scadenza<today&&a.diritti_status!=='ok')cnt++;}));
+  let cnt=0;
+  // Nuove quotazioni diritti scadute
+  DB.projects.forEach(p=>(p.quotazioni_diritti||[]).forEach(q=>{if(q.scadenza&&q.scadenza<today&&q.stato==='approvata')cnt++;}));
+  // Legacy attori
+  DB.projects.forEach(p=>(p.attori||[]).forEach(a=>{if(a.diritti_scadenza&&a.diritti_scadenza<today&&a.diritti_status!=='ok')cnt++;}));
   const b=document.getElementById('badge-diritti'); b.textContent=cnt; b.style.display=cnt>0?'':'none';
 }
 
@@ -960,8 +1081,8 @@ function renderProjectDetail(){
     ${p.brief?`<div class="section-block"><div class="section-block-title">Brief Creativo</div><div style="font-size:13px;line-height:1.7;white-space:pre-wrap">${p.brief}</div></div>`:''}
     <div class="section-block">
       <div class="section-block-title">
-        Task & Checklist ${gSignedIn?'<span class="gcal-badge">📅 Calendar sync con orario</span>':''}
-        <button class="btn btn-sm btn-secondary" onclick="openTaskModal('${p.id}')">+ Aggiungi Task</button>
+        Task &amp; Checklist ${gSignedIn?'<span class="gcal-badge">📅 Calendar sync con orario</span>':''}
+        <button class="btn btn-sm btn-secondary" onclick="openTaskModal('${p.id}',null)">+ Aggiungi</button>
       </div>
       ${(p.tasks||[]).length===0?'<div style="font-size:12px;color:var(--text3);padding:4px 0">Nessuna task. Clicca "+ Aggiungi Task".</div>':''}
       ${(p.tasks||[]).map((t,i)=>`<div class="task-item">
@@ -975,7 +1096,10 @@ function renderProjectDetail(){
             ${t._cal_id?'<span class="gcal-badge">📅</span>':''}
           </div>
         </div>
-        <button class="btn-icon" style="width:22px;height:22px;border:none;color:var(--text3);font-size:11px;flex-shrink:0" onclick="removeTask('${p.id}',${i})">✕</button>
+        <div class="task-actions">
+          <button class="btn-icon" style="width:24px;height:24px;border:none;color:var(--accent);font-size:13px" title="Modifica" onclick="openTaskModal('${p.id}',${i})">✎</button>
+          <button class="btn-icon" style="width:24px;height:24px;border:none;color:var(--text3);font-size:11px" title="Elimina" onclick="removeTask('${p.id}',${i})">✕</button>
+        </div>
       </div>`).join('')}
     </div>
     <div class="section-block">
@@ -987,86 +1111,256 @@ function renderProjectDetail(){
       </div>
     </div>`;
   } else if(tab==='casting'){
+    const casting=p.casting||[];
+    const quotDir=p.quotazioni_diritti||[];
     body=`
-    <div class="section-block">
-      <div class="section-block-title">Attori / Speaker ${gSignedIn?'<span class="gcal-badge">📅 diritti sync</span>':''} <button class="btn btn-sm btn-secondary" onclick="openAddActor('${p.id}')">+ Aggiungi</button></div>
-      ${att.length===0?'<div style="font-size:12px;color:var(--text3)">Nessun attore assegnato.</div>':''}
-      ${att.map((a,i)=>{const actor=DB.actors.find(x=>x.id===a.actor_id); const nome=actor?actor.nome+' '+actor.cognome:a.nome_libero||'—';
-        return`<div class="actor-card">
-          <div class="actor-avatar">${nome.charAt(0).toUpperCase()}</div>
-          <div class="actor-info">
-            <div class="actor-name">${nome}</div>
-            <div class="actor-role">${a.ruolo||'Speaker'}</div>
-            <div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap">
-              <span class="diritti-badge ${a.diritti_status==='ok'?'diritti-ok':a.diritti_status==='scaduto'?'diritti-scaduto':'diritti-pending'}">Diritti: ${a.diritti_status==='ok'?'✓ OK':a.diritti_status==='scaduto'?'⚠ Scaduti':'In attesa'}</span>
-              ${a.diritti_scadenza?`<span style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace">Scade: ${formatDate(a.diritti_scadenza)}${a._cal_diritti?' 📅':''}</span>`:''}
-            </div>
-          </div>
-          <div style="text-align:right;flex-shrink:0">
-            ${a.cachet?`<div style="font-size:12px;font-weight:600;font-family:'DM Mono',monospace">€${parseFloat(a.cachet).toLocaleString('it-IT')}</div>`:''}
-            <button class="btn btn-sm btn-danger" style="margin-top:6px" onclick="removeActorP('${p.id}',${i})">Rimuovi</button>
-          </div>
-        </div>`;}).join('')}
-    </div>
-    <div id="add-actor-form-${p.id}" style="display:none">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start">
+
+      <!-- ═══ SEZIONE CASTING ═══ -->
       <div class="section-block">
-        <div class="section-block-title">Assegna al Progetto</div>
-        <div class="form-grid">
-          <div class="form-group"><label>Attore (anagrafica)</label><select id="cas-sel-${p.id}"><option value="">— Seleziona —</option>${DB.actors.map(a=>`<option value="${a.id}">${a.nome} ${a.cognome}</option>`).join('')}</select></div>
-          <div class="form-group"><label>Nome libero</label><input type="text" id="cas-nome-${p.id}" placeholder="Se non in anagrafica"></div>
-          <div class="form-group"><label>Ruolo</label><input type="text" id="cas-ruolo-${p.id}" placeholder="es. Voce principale"></div>
-          <div class="form-group"><label>Cachet (€)</label><input type="number" id="cas-cachet-${p.id}" placeholder="0"></div>
-          <div class="form-group"><label>Status Diritti</label><select id="cas-dir-${p.id}"><option value="pending">In attesa</option><option value="ok">OK - Firmati</option><option value="scaduto">Scaduti</option></select></div>
-          <div class="form-group"><label>Scadenza Diritti ${gSignedIn?'→ Calendar':''}</label><input type="date" id="cas-scad-${p.id}"></div>
+        <div class="section-block-title">
+          📋 Proposte Casting inviate
+          <button class="btn btn-sm btn-secondary" onclick="toggleForm('add-cast-form-${p.id}')">+ Aggiungi</button>
         </div>
-        <div style="display:flex;gap:8px;margin-top:10px">
-          <button class="btn btn-primary btn-sm" onclick="saveActorP('${p.id}')">Aggiungi</button>
-          <button class="btn btn-secondary btn-sm" onclick="document.getElementById('add-actor-form-${p.id}').style.display='none'">Annulla</button>
+        ${casting.length===0?'<div style="font-size:12px;color:var(--text3);padding:4px 0">Nessuna proposta inserita.</div>':''}
+        ${casting.map((c,i)=>`<div style="display:flex;align-items:flex-start;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)">
+          <div class="actor-avatar" style="width:30px;height:30px;font-size:12px;flex-shrink:0">${(c.nome||'?').charAt(0).toUpperCase()}</div>
+          <div style="flex:1">
+            <div style="font-size:13px;font-weight:600">${c.nome||'—'}</div>
+            ${c.data_invio?`<div style="font-size:11px;color:var(--text3);font-family:'DM Mono',monospace">📧 Inviato: ${formatDate(c.data_invio)}</div>`:'<div style="font-size:11px;color:var(--orange)">⚠ Data invio non impostata</div>'}
+            ${c.note?`<div style="font-size:11.5px;color:var(--text2);margin-top:2px">${c.note}</div>`:''}
+          </div>
+          <button class="btn-icon" style="border:none;color:var(--text3);font-size:11px" onclick="removeCasting('${p.id}',${i})">✕</button>
+        </div>`).join('')}
+        <div id="add-cast-form-${p.id}" style="display:none;margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
+          <div class="form-grid" style="grid-template-columns:1fr">
+            <div class="form-group">
+              <label>Attore (da anagrafica)</label>
+              <select id="cast-sel-${p.id}">
+                <option value="">— oppure inserisci nome libero —</option>
+                ${DB.actors.map(a=>`<option value="${a.id}">${a.nome} ${a.cognome}</option>`).join('')}
+              </select>
+            </div>
+            <div class="form-group"><label>Nome libero (se non in anagrafica)</label><input type="text" id="cast-nome-${p.id}" placeholder="Nome Cognome"></div>
+            <div class="form-group"><label>Data invio proposta al cliente</label><input type="date" id="cast-data-${p.id}"></div>
+            <div class="form-group"><label>Note</label><input type="text" id="cast-note-${p.id}" placeholder="es. Proposta voce principale, tono energico..."></div>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:10px">
+            <button class="btn btn-primary btn-sm" onclick="saveCasting('${p.id}')">Aggiungi proposta</button>
+            <button class="btn btn-secondary btn-sm" onclick="toggleForm('add-cast-form-${p.id}')">Annulla</button>
+          </div>
         </div>
       </div>
+
+      <!-- ═══ SEZIONE DIRITTI ═══ -->
+      <div class="section-block">
+        <div class="section-block-title">
+          📜 Quotazioni Diritti
+          <button class="btn btn-sm btn-secondary" onclick="toggleForm('add-dir-form-${p.id}')">+ Aggiungi</button>
+        </div>
+        ${quotDir.length===0?'<div style="font-size:12px;color:var(--text3);padding:4px 0">Nessuna quotazione inserita.</div>':''}
+        ${quotDir.map((q,i)=>{
+          const costoReale=parseFloat(q.cachet||0)*(1+ENPALS_DIRITTI);
+          const margine=parseFloat(q.richiesto_cliente||0)-costoReale;
+          const margPct=q.richiesto_cliente?((margine/parseFloat(q.richiesto_cliente))*100):0;
+          const isPos=margine>=0;
+          return`<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:8px">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+              <div style="flex:1;font-size:13px;font-weight:600">${q.nome_attore||'—'}</div>
+              <span class="badge ${q.stato==='approvata'?'messa-onda':q.stato==='rifiutata'?'urgente':'casting'}">${q.stato==='approvata'?'✓ Approvata':q.stato==='rifiutata'?'✗ Rifiutata':'In trattativa'}</span>
+              <button class="btn-icon" style="border:none;color:var(--text3);font-size:11px" onclick="removeQuotDiritti('${p.id}',${i})">✕</button>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+              <div>
+                <div style="font-size:10px;color:var(--text3);text-transform:uppercase;margin-bottom:2px">Cachet attore</div>
+                <div style="font-family:'DM Mono',monospace;font-size:13px;font-weight:600">€${parseFloat(q.cachet||0).toLocaleString('it-IT')}</div>
+                <div style="font-size:10px;color:var(--orange)">+${Math.round(ENPALS_DIRITTI*100)}% ENPALS = €${costoReale.toFixed(0)}</div>
+              </div>
+              <div>
+                <div style="font-size:10px;color:var(--text3);text-transform:uppercase;margin-bottom:2px">Al cliente</div>
+                <div style="font-family:'DM Mono',monospace;font-size:13px;font-weight:600">€${parseFloat(q.richiesto_cliente||0).toLocaleString('it-IT')}</div>
+              </div>
+              <div>
+                <div style="font-size:10px;color:var(--text3);text-transform:uppercase;margin-bottom:2px">Margine</div>
+                <div style="font-family:'DM Mono',monospace;font-size:13px;font-weight:600;color:${isPos?'var(--green)':'var(--red)'}">€${margine.toFixed(0)}</div>
+                <div style="font-size:10px;color:${isPos?'var(--green)':'var(--red)'};">${margPct.toFixed(1)}%</div>
+              </div>
+            </div>
+            ${q.scadenza?`<div style="font-size:11px;color:var(--text3);margin-top:6px;font-family:'DM Mono',monospace">Scadenza diritti: ${formatDate(q.scadenza)}</div>`:''}
+            ${q.note?`<div style="font-size:11.5px;color:var(--text2);background:var(--surface2);border-radius:5px;padding:6px 8px;margin-top:6px;line-height:1.5">${q.note}</div>`:''}
+          </div>`;
+        }).join('')}
+        <!-- Form aggiunta quotazione -->
+        <div id="add-dir-form-${p.id}" style="display:none;margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
+          <div class="form-grid" style="grid-template-columns:1fr">
+            <div class="form-group"><label>Nome attore</label><input type="text" id="dir-nome-${p.id}" placeholder="Nome attore"></div>
+            <div class="form-group">
+              <label>Cachet attore (€) — il ${Math.round(ENPALS_DIRITTI*100)}% ENPALS verrà aggiunto al costo reale</label>
+              <input type="number" id="dir-cachet-${p.id}" placeholder="0" oninput="calcMargDir('${p.id}')">
+            </div>
+            <div class="form-group">
+              <label>Importo richiesto al cliente (€)</label>
+              <input type="number" id="dir-richiesto-${p.id}" placeholder="0" oninput="calcMargDir('${p.id}')">
+            </div>
+            <div id="dir-calc-box-${p.id}" style="display:none">
+              <div class="calc-dir-box">
+                <span style="color:var(--orange)">Costo reale (con ENPALS): <strong id="dir-costo-real-${p.id}" style="font-family:'DM Mono',monospace"></strong></span>
+                <span>Margine: <strong id="dir-marg-val-${p.id}" style="font-family:'DM Mono',monospace"></strong></span>
+                <span>%: <strong id="dir-marg-pct-${p.id}" style="font-family:'DM Mono',monospace"></strong></span>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Stato quotazione</label>
+              <select id="dir-stato-${p.id}">
+                <option value="trattativa">In trattativa</option>
+                <option value="approvata">✓ Approvata e in pagamento</option>
+                <option value="rifiutata">✗ Non approvata / Rifiutata</option>
+              </select>
+            </div>
+            <div class="form-group"><label>Scadenza diritti (se approvata)</label><input type="date" id="dir-scad-${p.id}"></div>
+            <div class="form-group full"><label>Note — Programmazione, parametri cachet e mark-up</label><textarea id="dir-note-${p.id}" placeholder="es. Radio nazionale, 1 anno, 500 passaggi/mese — cachet calcolato su tariffa IMAIE cat. A..."></textarea></div>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:10px">
+            <button class="btn btn-primary btn-sm" onclick="saveQuotDiritti('${p.id}')">Salva Quotazione</button>
+            <button class="btn btn-secondary btn-sm" onclick="toggleForm('add-dir-form-${p.id}')">Annulla</button>
+          </div>
+        </div>
+      </div>
+
     </div>`;
   } else if(tab==='preventivo'){
+    const totCosto=voci.reduce((s,v)=>(s+(parseFloat(v.qty)||1)*(parseFloat(v.costo||0))),0);
+    const totRicavi=voci.reduce((s,v)=>(s+(parseFloat(v.qty)||1)*(parseFloat(v.price||0))),0);
+    const totMarg=totRicavi-totCosto;
+    const totMargPct=totRicavi?((totMarg/totRicavi)*100):0;
     body=`
     <div class="section-block">
-      <div class="section-block-title">Voci di Costo</div>
-      <div class="table-wrap"><table><thead><tr><th>Descrizione</th><th>Qtà</th><th>€ Unit.</th><th>Totale</th><th></th></tr></thead>
-      <tbody>${voci.map((v,i)=>`<tr><td>${v.desc}</td><td style="font-family:'DM Mono',monospace">${v.qty||1}</td><td style="font-family:'DM Mono',monospace">€${parseFloat(v.price||0).toLocaleString('it-IT')}</td><td style="font-family:'DM Mono',monospace;font-weight:600">€${((parseFloat(v.qty)||1)*(parseFloat(v.price)||0)).toLocaleString('it-IT')}</td><td><button class="btn-icon" onclick="removeVoce('${p.id}',${i})" style="border:none;color:var(--text3)">✕</button></td></tr>`).join('')}</tbody></table></div>
-      <div style="display:grid;grid-template-columns:1fr 70px 110px auto;gap:8px;margin-top:10px;align-items:end">
-        <input type="text" id="vd-${p.id}" placeholder="Descrizione..."><input type="number" id="vq-${p.id}" placeholder="Qtà" value="1"><input type="number" id="vp-${p.id}" placeholder="€ unitario">
-        <button class="btn btn-sm btn-primary" onclick="addVoce('${p.id}')">+ Aggiungi</button>
+      <div class="section-block-title">Voci di Preventivo</div>
+      <div style="margin-bottom:12px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <span style="font-size:11px;color:var(--text3);font-weight:500">Aggiungi rapido:</span>
+        <button class="btn btn-sm btn-secondary" onclick="addVoceConvocazione('${p.id}')">🎙 Convocazione Attore</button>
+        <button class="btn btn-sm btn-secondary" onclick="addVoceSuggerita('${p.id}','Post-produzione audio')">+ Post-produzione</button>
+        <button class="btn btn-sm btn-secondary" onclick="addVoceSuggerita('${p.id}','Libreria musicale')">+ Libreria musicale</button>
+        <button class="btn btn-sm btn-secondary" onclick="addVoceSuggerita('${p.id}','Studio di registrazione')">+ Studio</button>
       </div>
-      <div class="total-row"><span class="total-label">TOTALE</span><span class="total-value">€${totPrev.toLocaleString('it-IT',{minimumFractionDigits:2})}</span></div>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr>
+            <th style="min-width:180px">Descrizione</th>
+            <th style="width:50px">Qtà</th>
+            <th style="width:110px">€ Cliente</th>
+            <th style="width:110px">€ Costo interno</th>
+            <th style="width:90px">Margine</th>
+            <th style="width:110px">Tot. Ricavo</th>
+            <th style="width:28px"></th>
+          </tr></thead>
+          <tbody>
+          ${voci.map((v,i)=>{
+            const qty=parseFloat(v.qty)||1,price=parseFloat(v.price||0),costo=parseFloat(v.costo||0);
+            const tot=qty*price,totC=qty*costo,marg=tot-totC;
+            const margPct=tot?(marg/tot*100):0;
+            return\`<tr>
+              <td><div style="font-weight:500">\${v.desc}</div>\${v.isConvocazione?\`<div style="font-size:10px;color:var(--orange)">🔸 Costo include +\${Math.round(ENPALS_CONV*100)}% ENPALS</div>\`:''}
+              </td>
+              <td style="font-family:'DM Mono',monospace;text-align:center">\${qty}</td>
+              <td style="font-family:'DM Mono',monospace">€\${price.toLocaleString('it-IT',{minimumFractionDigits:2})}</td>
+              <td style="font-family:'DM Mono',monospace;color:var(--text2)">€\${costo.toLocaleString('it-IT',{minimumFractionDigits:2})}</td>
+              <td><span style="font-size:11px;font-weight:600;padding:2px 6px;border-radius:4px;font-family:'DM Mono',monospace;background:\${marg>=0?'var(--green-light)':'var(--red-light)'};color:\${marg>=0?'var(--green)':'var(--red)'}">\${margPct.toFixed(1)}%</span></td>
+              <td style="font-family:'DM Mono',monospace;font-weight:600">€\${tot.toLocaleString('it-IT',{minimumFractionDigits:2})}</td>
+              <td><button class="btn-icon" onclick="removeVoce('\${p.id}',\${i})" style="border:none;color:var(--text3)">✕</button></td>
+            </tr>\`;
+          }).join('')}
+          \${voci.length===0?\`<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:18px;font-size:12px">Nessuna voce. Usa i pulsanti rapidi o aggiungi manualmente.</td></tr>\`:''}
+          </tbody>
+        </table>
+      </div>
+      <div style="display:grid;grid-template-columns:2fr 55px 105px 105px auto;gap:8px;margin-top:12px;align-items:end">
+        <div><div style="font-size:11px;color:var(--text3);margin-bottom:3px">Descrizione</div><input type="text" id="vd-\${p.id}" placeholder="Descrizione..."></div>
+        <div><div style="font-size:11px;color:var(--text3);margin-bottom:3px">Qtà</div><input type="number" id="vq-\${p.id}" value="1" min="1"></div>
+        <div><div style="font-size:11px;color:var(--text3);margin-bottom:3px">€ al cliente</div><input type="number" id="vp-\${p.id}" placeholder="0"></div>
+        <div><div style="font-size:11px;color:var(--text3);margin-bottom:3px">€ costo interno</div><input type="number" id="vc-\${p.id}" placeholder="0"></div>
+        <button class="btn btn-primary btn-sm" onclick="addVoce('\${p.id}')">+ Aggiungi</button>
+      </div>
+      <div class="total-row" style="flex-direction:column;align-items:flex-end;gap:4px">
+        <div style="font-size:12px;color:var(--text2)">Ricavi: <strong style="font-family:'DM Mono',monospace">€\${totRicavi.toLocaleString('it-IT',{minimumFractionDigits:2})}</strong> · Costi: <strong style="font-family:'DM Mono',monospace">€\${totCosto.toLocaleString('it-IT',{minimumFractionDigits:2})}</strong></div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span class="total-label">MARGINE TOTALE</span>
+          <span class="total-value" style="color:\${totMarg>=0?'var(--green)':'var(--red)'}">€\${totMarg.toLocaleString('it-IT',{minimumFractionDigits:2})} (\${totMargPct.toFixed(1)}%)</span>
+        </div>
+      </div>
     </div>
     <div class="section-block">
-      <div class="section-block-title">Storico Preventivi</div>
-      ${prev.length===0?'<div style="font-size:12px;color:var(--text3)">Nessuno.</div>':''}
-      ${prev.map((pv,i)=>`<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)"><div style="flex:1"><div style="font-size:13px;font-weight:500">Preventivo ${i+1}</div><div style="font-size:11px;color:var(--text3)">${pv.date}</div></div><div style="font-family:'DM Mono',monospace;font-size:13px;font-weight:600">€${parseFloat(pv.totale||0).toLocaleString('it-IT',{minimumFractionDigits:2})}</div><span class="badge ${pv.stato==='approvato'?'messa-onda':pv.stato==='rifiutato'?'urgente':'casting'}">${pv.stato}</span></div>`).join('')}
-      <button class="btn btn-sm btn-secondary" style="margin-top:10px" onclick="snapPrev('${p.id}',${totPrev})">📄 Salva snapshot</button>
-    </div>`;
+      <div class="section-block-title">Storico Preventivi (snapshot completi)</div>
+      \${prev.length===0?'<div style="font-size:12px;color:var(--text3)">Nessuno snapshot salvato.</div>':''}
+      \${prev.map((pv,pvIdx)=>\`<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <div style="flex:1"><div style="font-size:13px;font-weight:600">Preventivo \${pvIdx+1}</div><div style="font-size:11px;color:var(--text3)">\${pv.date}</div></div>
+          <div style="text-align:right">
+            <div style="font-family:'DM Mono',monospace;font-size:14px;font-weight:700">€\${parseFloat(pv.totale||0).toLocaleString('it-IT',{minimumFractionDigits:2})}</div>
+            \${pv.totale_costo!==undefined?\`<div style="font-size:11px;color:var(--text3)">Marg: €\${(pv.totale-(pv.totale_costo||0)).toLocaleString('it-IT',{minimumFractionDigits:2})}</div>\`:''}
+          </div>
+          <span class="badge \${pv.stato==='approvato'?'messa-onda':pv.stato==='rifiutato'?'urgente':'casting'}">\${pv.stato}</span>
+          <button class="btn btn-sm btn-secondary" style="font-size:11px" onclick="changePrevStato('\${p.id}',\${pvIdx})">Cambia stato</button>
+        </div>
+        \${pv.voci&&pv.voci.length?\`<div class="snap-voci">\${pv.voci.map(v=>\`<span style="background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:2px 7px;font-size:11px"><strong>\${v.desc}</strong>: €\${((parseFloat(v.qty)||1)*parseFloat(v.price||0)).toLocaleString('it-IT',{minimumFractionDigits:2})}\${v.costo?\` (costo €\${((parseFloat(v.qty)||1)*parseFloat(v.costo||0)).toLocaleString('it-IT',{minimumFractionDigits:2})})\`:''}</span>\`).join('')}</div>\`
+        :'<div style="font-size:11px;color:var(--text3)">Snapshot vecchio formato (senza dettaglio voci)</div>'}
+      </div>\`).join('')}
+      <button class="btn btn-sm btn-secondary" style="margin-top:8px" onclick="snapPrev('\${p.id}')">📄 Salva snapshot corrente</button>
+    </div>\`;
+
   } else if(tab==='consuntivo'){
-    const cach=att.reduce((s,a)=>s+(parseFloat(a.cachet)||0),0);
-    const spese=voci.reduce((s,v)=>s+(parseFloat(v.qty||1))*(parseFloat(v.price||0)),0);
-    const marg=(parseFloat(p.budget)||0)-spese;
-    const margP=p.budget?((marg/parseFloat(p.budget))*100).toFixed(1):0;
+    const today=new Date().toISOString().split('T')[0];
+    const spese=voci.reduce((s,v)=>s+(parseFloat(v.qty||1))*(parseFloat(v.costo||0)),0);
+    const ricavi=voci.reduce((s,v)=>s+(parseFloat(v.qty||1))*(parseFloat(v.price||0)),0);
+    const marg=ricavi-spese;
+    const margP=ricavi?((marg/ricavi)*100).toFixed(1):0;
+    const totPag=fatt.filter(f=>f.stato==='pagata').reduce((s,f)=>s+(parseFloat(f.importo)||0),0);
+    const totAttesa=fatt.filter(f=>f.stato==='attesa').reduce((s,f)=>s+(parseFloat(f.importo)||0),0);
+    // solleciti scaduti oggi
+    const solleciti=fatt.filter((f,fi)=>f.sollecito&&f.sollecito<=today&&f.stato==='attesa');
     body=`
+    ${solleciti.length?`<div style="background:#FFF8E1;border:1px solid #FFD54F;border-radius:8px;padding:12px 16px;margin-bottom:14px;display:flex;align-items:flex-start;gap:10px"><span style="font-size:18px">🔔</span><div><div style="font-size:13px;font-weight:600;color:#B45309">Sollecita il pagamento! (${solleciti.length} fattura${solleciti.length>1?'e':''})</div>${solleciti.map(f=>`<div style="font-size:12px;color:#92400E">${f.desc||'Fattura'} ${f.numero||''} — €${parseFloat(f.importo||0).toLocaleString('it-IT',{minimumFractionDigits:2})} · Scadenza sollecito: ${formatDate(f.sollecito)}</div>`).join('')}</div></div>`:''}
     <div class="consuntivo-grid" style="margin-bottom:16px">
       <div class="consuntivo-item"><div class="c-label">Budget Prev.</div><div class="c-val">€${parseFloat(p.budget||0).toLocaleString('it-IT')}</div></div>
-      <div class="consuntivo-item"><div class="c-label">Spese Totali</div><div class="c-val ${spese>parseFloat(p.budget||0)?'negative':''}">€${spese.toLocaleString('it-IT',{minimumFractionDigits:2})}</div></div>
+      <div class="consuntivo-item"><div class="c-label">Costi Interni</div><div class="c-val ${spese>parseFloat(p.budget||0)?'negative':''}">€${spese.toLocaleString('it-IT',{minimumFractionDigits:2})}</div></div>
+      <div class="consuntivo-item"><div class="c-label">Ricavi Preventivo</div><div class="c-val">€${ricavi.toLocaleString('it-IT',{minimumFractionDigits:2})}</div></div>
       <div class="consuntivo-item"><div class="c-label">Margine</div><div class="c-val ${marg>=0?'positive':'negative'}">€${marg.toLocaleString('it-IT',{minimumFractionDigits:2})}</div></div>
       <div class="consuntivo-item"><div class="c-label">Margine %</div><div class="c-val ${marg>=0?'positive':'negative'}">${margP}%</div></div>
-      <div class="consuntivo-item"><div class="c-label">Cachet Attori</div><div class="c-val" style="font-size:16px">€${cach.toLocaleString('it-IT')}</div></div>
       <div class="consuntivo-item"><div class="c-label">Fatturato</div><div class="c-val positive" style="font-size:16px">€${totFatt.toLocaleString('it-IT',{minimumFractionDigits:2})}</div></div>
     </div>
     <div class="section-block">
-      <div class="section-block-title">Fatture & Pagamenti <button class="btn btn-sm btn-secondary" onclick="addFattura('${p.id}')">+ Aggiungi</button></div>
+      <div class="section-block-title">Fatture &amp; Pagamenti <button class="btn btn-sm btn-secondary" onclick="openFattModal('${p.id}',null)">+ Nuova Fattura</button></div>
       ${fatt.length===0?'<div style="font-size:12px;color:var(--text3)">Nessuna fattura.</div>':''}
-      ${fatt.map((f,i)=>`<div class="invoice-item"><div class="invoice-num">${f.numero||'#'+(i+1)}</div><div class="invoice-desc">${f.desc||'Fattura'}<div style="font-size:11px;color:var(--text3)">${f.date||''}</div></div><div class="invoice-amount">€${parseFloat(f.importo||0).toLocaleString('it-IT',{minimumFractionDigits:2})}</div><div style="width:80px;text-align:right"><span class="badge ${f.pagato?'messa-onda':'casting'}" style="cursor:pointer" onclick="toggleFatt('${p.id}',${i})">${f.pagato?'✓ Pagata':'In attesa'}</span></div><button class="btn-icon" onclick="removeFatt('${p.id}',${i})" style="border:none;color:var(--text3)">✕</button></div>`).join('')}
-      <div style="padding:8px 0 0;font-size:12px;color:var(--text3);display:flex;gap:16px">
+      ${fatt.map((f,i)=>{
+        const isSoll=f.sollecito&&f.sollecito<=today&&f.stato==='attesa';
+        const stato=f.stato||'attesa';
+        return`<div>
+          ${isSoll?`<div class="sollecito-alert"><span style="font-size:16px">🔔</span><div style="flex:1;font-size:12px;color:#92400E"><strong>Sollecita il pagamento</strong> — ${f.desc||'Fattura'} ${f.numero||''}</div></div>`:''}
+          <div class="invoice-item">
+            <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--text3);width:70px;flex-shrink:0">${f.numero||'#'+(i+1)}</div>
+            <div style="flex:1">
+              <div style="font-size:13px;font-weight:500">${f.desc||'Fattura'}</div>
+              <div style="font-size:11px;color:var(--text3)">${f.date||''}${f.sollecito?' · 🔔 Sollecito: '+formatDate(f.sollecito):''}</div>
+            </div>
+            <div style="font-family:'DM Mono',monospace;font-size:13px;font-weight:600;width:100px;text-align:right;flex-shrink:0">€${parseFloat(f.importo||0).toLocaleString('it-IT',{minimumFractionDigits:2})}</div>
+            <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+              <select style="font-size:11px;padding:3px 6px;border-radius:5px;width:115px" onchange="setFattStato('${p.id}',${i},this.value)">
+                <option value="attesa" ${stato==='attesa'?'selected':''}>In attesa</option>
+                <option value="pagata" ${stato==='pagata'?'selected':''}>✓ Pagata</option>
+                <option value="annullata" ${stato==='annullata'?'selected':''}>✗ Annullata</option>
+              </select>
+              <button class="btn-icon" style="border:none;color:var(--accent);font-size:11px" onclick="openFattModal('${p.id}',${i})" title="Modifica">✎</button>
+              <button class="btn-icon" onclick="removeFatt('${p.id}',${i})" style="border:none;color:var(--text3)" title="Elimina">✕</button>
+            </div>
+          </div>
+        </div>`;
+      }).join('')}
+      <div style="padding:10px 0 0;font-size:12px;color:var(--text3);display:flex;gap:16px;flex-wrap:wrap">
         <span>Fatturato: <strong style="color:var(--text);font-family:'DM Mono',monospace">€${totFatt.toLocaleString('it-IT',{minimumFractionDigits:2})}</strong></span>
         <span>Incassato: <strong style="color:var(--green);font-family:'DM Mono',monospace">€${totPag.toLocaleString('it-IT',{minimumFractionDigits:2})}</strong></span>
+        <span>Da incassare: <strong style="color:var(--orange);font-family:'DM Mono',monospace">€${totAttesa.toLocaleString('it-IT',{minimumFractionDigits:2})}</strong></span>
       </div>
-    </div>`;
-  }
+    </div>\`;
 
   return `
   <div class="topbar">
@@ -1096,6 +1390,10 @@ async function syncProject(pid){
   if(p.deadline) p._cal_deadline=await upsertEvent(`🎙 SCADENZA: ${p.titolo}`,`Cliente: ${p.cliente}`,p.deadline,'11',p._cal_deadline||null);
   for(const t of (p.tasks||[])){
     if(t.due&&!t.done) t._cal_id=await upsertEvent(`✅ ${t.text}`,`Progetto: ${p.titolo}${t.note?'\n'+t.note:''}`,t.due,'5',t._cal_id||null,t.startTime||null,t.endTime||null);
+    else if(t.done&&t._cal_id){ await deleteCalEvent(t._cal_id); t._cal_id=null; }
+  }
+  for(const q of (p.quotazioni_diritti||[])){
+    if(q.stato==='approvata'&&q.scadenza) q._cal_id=await upsertEvent(`⚠ DIRITTI: ${q.nome_attore} — ${p.titolo}`,`Progetto: ${p.titolo}\n${q.note||''}`,q.scadenza,'6',q._cal_id||null);
   }
   for(const a of (p.attori||[])){ if(a.diritti_scadenza&&a.diritti_status!=='ok'){ const act=DB.actors.find(x=>x.id===a.actor_id); const n=act?act.nome+' '+act.cognome:a.nome_libero||'Attore'; a._cal_diritti=await upsertEvent(`⚠ DIRITTI: ${n}`,`Progetto: ${p.titolo}`,a.diritti_scadenza,'6',a._cal_diritti||null); } }
   saveAndSync(); toast('📅 Sincronizzato su Calendar'); renderView();
@@ -1144,27 +1442,38 @@ function renderScadenze(){
 
 // ── FATTURAZIONE ───────────────────────────────────────────
 function renderFatturazione(){
+  const today=new Date().toISOString().split('T')[0];
   const all=DB.projects.flatMap(p=>(p.fatture||[]).map(f=>({...f,prog:p.titolo,pid:p.id})));
-  const tot=all.reduce((s,f)=>s+(parseFloat(f.importo)||0),0);
-  const pag=all.filter(f=>f.pagato).reduce((s,f)=>s+(parseFloat(f.importo)||0),0);
+  const tot=all.filter(f=>f.stato!=='annullata').reduce((s,f)=>s+(parseFloat(f.importo)||0),0);
+  const pag=all.filter(f=>f.stato==='pagata').reduce((s,f)=>s+(parseFloat(f.importo)||0),0);
+  const daIncassare=all.filter(f=>f.stato==='attesa').reduce((s,f)=>s+(parseFloat(f.importo)||0),0);
+  // Solleciti scaduti
+  const solleciti=all.filter(f=>f.sollecito&&f.sollecito<=today&&f.stato==='attesa');
+  const statoInfo=(f)=>{
+    if(f.stato==='pagata') return {cls:'messa-onda',lbl:'✓ Pagata'};
+    if(f.stato==='annullata') return {cls:'annullato',lbl:'✗ Annullata'};
+    return {cls:'casting',lbl:'⏳ In attesa'};
+  };
   return `
   <div class="topbar"><div class="page-title">Fatturazione</div></div>
   <div class="content">
+    ${solleciti.length?`<div style="background:#FFF8E1;border:1px solid #FFD54F;border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:flex-start;gap:10px"><span style="font-size:18px">🔔</span><div><div style="font-size:13px;font-weight:600;color:#B45309;margin-bottom:4px">Sollecita il pagamento (${solleciti.length} fattura${solleciti.length>1?'e':''})</div>${solleciti.map(f=>`<div style="font-size:12px;color:#92400E;cursor:pointer" onclick="showView('project-detail','${f.pid}');window._dt='consuntivo';renderView()">${f.prog} — ${f.desc||''}: €${parseFloat(f.importo||0).toLocaleString('it-IT',{minimumFractionDigits:2})}</div>`).join('')}</div></div>`:''}
     <div class="stats-row">
       <div class="stat-card"><div class="stat-label">Tot. Fatturato</div><div class="stat-value" style="font-size:18px">€${tot.toLocaleString('it-IT',{minimumFractionDigits:2})}</div></div>
       <div class="stat-card"><div class="stat-label">Incassato</div><div class="stat-value" style="font-size:18px;color:var(--green)">€${pag.toLocaleString('it-IT',{minimumFractionDigits:2})}</div></div>
-      <div class="stat-card"><div class="stat-label">Da Incassare</div><div class="stat-value" style="font-size:18px;color:var(--orange)">€${(tot-pag).toLocaleString('it-IT',{minimumFractionDigits:2})}</div></div>
+      <div class="stat-card"><div class="stat-label">Da Incassare</div><div class="stat-value" style="font-size:18px;color:var(--orange)">€${daIncassare.toLocaleString('it-IT',{minimumFractionDigits:2})}</div></div>
       <div class="stat-card"><div class="stat-label">Fatture</div><div class="stat-value">${all.length}</div></div>
     </div>
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
-      <table><thead><tr><th>N.</th><th>Progetto</th><th>Descrizione</th><th>Data</th><th style="text-align:right">Importo</th><th>Stato</th></tr></thead>
-      <tbody>${all.length===0?'<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:30px">Nessuna fattura</td></tr>':''}
-      ${all.map(f=>`<tr onclick="showView('project-detail','${f.pid}');window._dt='consuntivo';renderView()" style="cursor:pointer">
+      <table><thead><tr><th>N.</th><th>Progetto</th><th>Descrizione</th><th>Data</th><th style="text-align:right">Importo</th><th>Stato</th><th>Sollecito</th></tr></thead>
+      <tbody>${all.length===0?'<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:30px">Nessuna fattura</td></tr>':''}
+      ${all.map(f=>{const si=statoInfo(f); const isSoll=f.sollecito&&f.sollecito<=today&&f.stato==='attesa'; return`<tr onclick="showView('project-detail','${f.pid}');window._dt='consuntivo';renderView()" style="cursor:pointer;${isSoll?'background:#FFFBEB':''}">
         <td style="font-family:'DM Mono',monospace;color:var(--text3)">${f.numero||'—'}</td><td style="font-weight:500">${f.prog}</td><td>${f.desc||'—'}</td>
         <td style="font-family:'DM Mono',monospace;font-size:12px">${f.date||'—'}</td>
         <td style="text-align:right;font-family:'DM Mono',monospace;font-weight:600">€${parseFloat(f.importo||0).toLocaleString('it-IT',{minimumFractionDigits:2})}</td>
-        <td><span class="badge ${f.pagato?'messa-onda':'casting'}">${f.pagato?'Pagata':'In attesa'}</span></td>
-      </tr>`).join('')}</tbody></table>
+        <td><span class="badge ${si.cls}">${si.lbl}</span></td>
+        <td style="font-size:11px">${f.sollecito?`${isSoll?'🔔 ':''}${formatDate(f.sollecito)}`:'—'}</td>
+      </tr>`}).join('')}</tbody></table>
     </div>
   </div>`;
 }
@@ -1173,23 +1482,41 @@ function renderFatturazione(){
 function renderDiritti(){
   const today=new Date().toISOString().split('T')[0];
   const rows=[];
-  DB.projects.forEach(p=>(p.attori||[]).forEach(a=>{const act=DB.actors.find(x=>x.id===a.actor_id); rows.push({nome:act?act.nome+' '+act.cognome:a.nome_libero||'—',prog:p.titolo,pid:p.id,scad:a.diritti_scadenza,st:a.diritti_status,ruolo:a.ruolo,cal:a._cal_diritti});}));
-  const scad=rows.filter(r=>r.scad&&r.scad<today&&r.st!=='ok');
-  const imm=rows.filter(r=>{if(!r.scad)return false; const d=Math.ceil((new Date(r.scad)-new Date())/86400000); return d>=0&&d<=30;});
+  // Nuovo schema: quotazioni_diritti
+  DB.projects.forEach(p=>(p.quotazioni_diritti||[]).forEach(q=>{
+    rows.push({nome:q.nome_attore||'—',prog:p.titolo,pid:p.id,scad:q.scadenza,st:q.stato,cal:q._cal_id,
+      cachet:q.cachet,richiesto:q.richiesto_cliente,note:q.note});
+  }));
+  // Legacy: vecchi attori con diritti
+  DB.projects.forEach(p=>(p.attori||[]).forEach(a=>{
+    if(!a.diritti_scadenza&&!a.cachet) return;
+    const act=DB.actors.find(x=>x.id===a.actor_id);
+    rows.push({nome:act?act.nome+' '+act.cognome:a.nome_libero||'—',prog:p.titolo,pid:p.id,scad:a.diritti_scadenza,st:a.diritti_status==='ok'?'approvata':'trattativa',cal:a._cal_diritti});
+  }));
+  const scad=rows.filter(r=>r.scad&&r.scad<today&&r.st!=='approvata');
+  const imm=rows.filter(r=>{if(!r.scad)return false; const d=Math.ceil((new Date(r.scad)-new Date())/86400000); return d>=0&&d<=30&&r.st==='approvata';});
   return `
   <div class="topbar"><div class="page-title">Diritti d'Uso Voci</div>${gSignedIn?`<button class="btn btn-sm btn-secondary" onclick="syncAllToCalendar()">📅 Sync Calendar</button>`:''}</div>
   <div class="content">
     ${scad.length>0?`<div style="background:var(--red-light);border:1px solid #F5C6C2;border-radius:8px;padding:12px 14px;margin-bottom:14px"><div style="font-size:12px;font-weight:600;color:var(--red);margin-bottom:4px">⚠ ${scad.length} diritti scadut${scad.length===1?'o':'i'}</div>${scad.map(r=>`<div style="font-size:12px;color:var(--red)">${r.nome} — ${r.prog}</div>`).join('')}</div>`:''}
-    ${imm.length>0?`<div style="background:var(--orange-light);border:1px solid #F5C6C2;border-radius:8px;padding:12px 14px;margin-bottom:14px"><div style="font-size:12px;font-weight:600;color:var(--orange);margin-bottom:4px">📅 ${imm.length} in scadenza entro 30 giorni</div>${imm.map(r=>`<div style="font-size:12px;color:var(--orange)">${r.nome} — ${r.prog} (${formatDate(r.scad)})${r.cal?' 📅':''}</div>`).join('')}</div>`:''}
+    ${imm.length>0?`<div style="background:var(--orange-light);border:1px solid #F5D0A9;border-radius:8px;padding:12px 14px;margin-bottom:14px"><div style="font-size:12px;font-weight:600;color:var(--orange);margin-bottom:4px">📅 ${imm.length} in scadenza entro 30 giorni</div>${imm.map(r=>`<div style="font-size:12px;color:var(--orange)">${r.nome} — ${r.prog} (${formatDate(r.scad)})${r.cal?' 📅':''}</div>`).join('')}</div>`:''}
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
-      <table><thead><tr><th>Attore</th><th>Progetto</th><th>Ruolo</th><th>Scadenza</th><th>Status</th><th>Cal</th></tr></thead>
-      <tbody>${rows.length===0?'<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:30px">Nessun diritto registrato</td></tr>':''}
-      ${rows.map(r=>{const isSc=r.scad&&r.scad<today; return`<tr style="cursor:pointer" onclick="showView('project-detail','${r.pid}');window._dt='casting';renderView()">
-        <td style="font-weight:500">${r.nome}</td><td>${r.prog}</td><td style="color:var(--text2)">${r.ruolo||'—'}</td>
-        <td style="font-family:'DM Mono',monospace;font-size:12px;color:${isSc?'var(--red)':''}">${r.scad?formatDate(r.scad):'—'}</td>
-        <td><span class="diritti-badge ${r.st==='ok'?'diritti-ok':isSc?'diritti-scaduto':'diritti-pending'}">${r.st==='ok'?'✓ OK':isSc?'⚠ Scaduto':'In attesa'}</span></td>
-        <td>${r.cal?'<span class="gcal-badge">📅</span>':'—'}</td>
-      </tr>`;}).join('')}</tbody></table>
+      <table><thead><tr><th>Attore</th><th>Progetto</th><th>Cachet</th><th>Al cliente</th><th>Margine</th><th>Scadenza</th><th>Stato</th><th>Cal</th></tr></thead>
+      <tbody>${rows.length===0?'<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:30px">Nessuna quotazione diritti registrata</td></tr>':''}
+      ${rows.map(r=>{
+        const costoReale=parseFloat(r.cachet||0)*(1+ENPALS_DIRITTI);
+        const margine=parseFloat(r.richiesto||0)-costoReale;
+        const isSc=r.scad&&r.scad<today;
+        return`<tr style="cursor:pointer" onclick="showView('project-detail','${r.pid}');window._dt='casting';renderView()">
+          <td style="font-weight:500">${r.nome}</td><td>${r.prog}</td>
+          <td style="font-family:'DM Mono',monospace;font-size:12px">${r.cachet?'€'+parseFloat(r.cachet).toLocaleString('it-IT'):'—'}</td>
+          <td style="font-family:'DM Mono',monospace;font-size:12px">${r.richiesto?'€'+parseFloat(r.richiesto).toLocaleString('it-IT'):'—'}</td>
+          <td>${r.cachet&&r.richiesto?`<span style="font-size:11px;font-weight:600;padding:2px 6px;border-radius:4px;background:${margine>=0?'var(--green-light)':'var(--red-light)'};color:${margine>=0?'var(--green)':'var(--red)'}">€${margine.toFixed(0)}</span>`:'—'}</td>
+          <td style="font-family:'DM Mono',monospace;font-size:12px;color:${isSc?'var(--red)':''}">${r.scad?formatDate(r.scad):'—'}</td>
+          <td><span class="diritti-badge ${r.st==='approvata'?'diritti-ok':isSc?'diritti-scaduto':'diritti-pending'}">${r.st==='approvata'?'✓ Approvata':isSc?'⚠ Scaduta':'In trattativa'}</span></td>
+          <td>${r.cal?'<span class="gcal-badge">📅</span>':'—'}</td>
+        </tr>`;
+      }).join('')}</tbody></table>
     </div>
   </div>`;
 }
@@ -1395,17 +1722,29 @@ async function deleteLocalEvent(localId){
 }
 
 // ── MODAL TASK CON ORARIO ──────────────────────────────────
-function openTaskModal(pid){
+function openTaskModal(pid, idx){
   _taskModalPid=pid;
-  document.getElementById('tk-text').value='';
-  document.getElementById('tk-data').value='';
-  document.getElementById('tk-note').value='';
-  document.getElementById('tk-has-time').checked=false;
-  document.getElementById('tk-time-block').style.display='none';
-  document.getElementById('tk-inizio').value='09:00';
-  document.getElementById('tk-fine').value='10:00';
+  _taskModalIdx=(idx!==null&&idx!==undefined)?idx:null;
+  const p=DB.projects.find(x=>x.id===pid);
+  const t=(_taskModalIdx!==null && p)?p.tasks[_taskModalIdx]:null;
+  // Titolo dinamico
+  const titleEl=document.getElementById('modal-task-title');
+  if(titleEl) titleEl.textContent=t?'Modifica Task':'Aggiungi Task';
+  // Precompila se modifica
+  document.getElementById('tk-text').value=t?t.text:'';
+  document.getElementById('tk-data').value=t?t.due||'':'';
+  document.getElementById('tk-note').value=t?t.note||'':'';
+  const hasTime=t&&t.startTime&&t.endTime;
+  document.getElementById('tk-has-time').checked=!!hasTime;
+  document.getElementById('tk-time-block').style.display=hasTime?'block':'none';
+  document.getElementById('tk-inizio').value=t&&t.startTime?t.startTime:'09:00';
+  document.getElementById('tk-fine').value=t&&t.endTime?t.endTime:'10:00';
   document.getElementById('tk-gcal-info').style.display=gSignedIn?'block':'none';
   document.getElementById('modal-task').classList.remove('hidden');
+}
+function closeTaskModal(){
+  document.getElementById('modal-task').classList.add('hidden');
+  _taskModalIdx=null;
 }
 function toggleTaskTime(cb){
   document.getElementById('tk-time-block').style.display=cb.checked?'block':'none';
@@ -1419,28 +1758,45 @@ async function saveModalTask(){
   const startTime=hasTime?document.getElementById('tk-inizio').value:null;
   const endTime  =hasTime?document.getElementById('tk-fine').value:null;
   const note=document.getElementById('tk-note').value.trim();
-  const task={text,due,startTime,endTime,note,done:false};
+
+  const isEdit=(_taskModalIdx!==null&&_taskModalIdx!==undefined);
+  const existing=isEdit?p.tasks[_taskModalIdx]:null;
+  const existingCalId=existing?existing._cal_id:null;
+
+  let calId_new=existingCalId||null;
   if(gSignedIn&&due){
-    task._cal_id=await upsertEvent(
+    // upsert aggiorna se esiste, crea se nuovo
+    calId_new=await upsertEvent(
       `✅ ${text}`,
       `Progetto: ${p.titolo}${note?'\n'+note:''}`,
-      due,'5',null,startTime,endTime
+      due,'5',existingCalId||null,startTime,endTime
     );
+  } else if(gSignedIn&&!due&&existingCalId){
+    // rimossa la data → elimina da Calendar
+    await deleteCalEvent(existingCalId);
+    calId_new=null;
   }
-  p.tasks.push(task);
+
+  const taskObj={text,due,startTime,endTime,note,done:existing?existing.done:false,_cal_id:calId_new||undefined};
+
+  if(isEdit) p.tasks[_taskModalIdx]=taskObj;
+  else p.tasks.push(taskObj);
+
   saveAndSync();
   document.getElementById('modal-task').classList.add('hidden');
-  const calMsg=gSignedIn&&due?(hasTime?` · ${startTime}–${endTime} su Calendar`:'· su Calendar'):'';
-  toast('✓ Task aggiunta'+calMsg);
+  _taskModalIdx=null;
+  const calMsg=gSignedIn&&due?(hasTime?` · ${startTime}–${endTime} su Calendar`:' · su Calendar'):'';
+  toast(isEdit?'✓ Task aggiornata'+calMsg:'✓ Task aggiunta'+calMsg);
   renderView();
 }
+
 
 // ── ACTIONS ────────────────────────────────────────────────
 function openNewProject(){ document.getElementById('modal-new-project').classList.remove('hidden'); }
 function closeNewProject(){ document.getElementById('modal-new-project').classList.add('hidden'); }
 function saveNewProject(){
   const t=document.getElementById('np-titolo').value.trim(); if(!t){alert('Inserisci il titolo');return;}
-  const p={id:uid(),titolo:t,cliente:document.getElementById('np-cliente').value.trim(),brand:document.getElementById('np-brand').value.trim(),tipo_spot:document.getElementById('np-tipo').value,durata:document.getElementById('np-durata').value,brief_date:document.getElementById('np-brief-date').value,deadline:document.getElementById('np-deadline').value,budget:document.getElementById('np-budget').value,referente:document.getElementById('np-referente').value.trim(),brief:document.getElementById('np-brief').value.trim(),urgenza:document.getElementById('np-urgenza').value,step:0,tasks:[],voci:[],attori:[],note:[],fatture:[],preventivi:[],created:new Date().toISOString().split('T')[0]};
+  const p={id:uid(),titolo:t,cliente:document.getElementById('np-cliente').value.trim(),brand:document.getElementById('np-brand').value.trim(),tipo_spot:document.getElementById('np-tipo').value,durata:document.getElementById('np-durata').value,brief_date:document.getElementById('np-brief-date').value,deadline:document.getElementById('np-deadline').value,budget:document.getElementById('np-budget').value,referente:document.getElementById('np-referente').value.trim(),brief:document.getElementById('np-brief').value.trim(),urgenza:document.getElementById('np-urgenza').value,step:0,tasks:[],voci:[],attori:[],casting:[],quotazioni_diritti:[],note:[],fatture:[],preventivi:[],created:new Date().toISOString().split('T')[0]};
   if(document.getElementById('np-note').value.trim()) p.note.push({text:document.getElementById('np-note').value.trim(),date:new Date().toLocaleDateString('it-IT')});
   DB.projects.unshift(p); saveAndSync(); closeNewProject();
   ['np-titolo','np-cliente','np-brand','np-durata','np-brief-date','np-deadline','np-budget','np-referente','np-brief','np-note'].forEach(id=>document.getElementById(id).value='');
@@ -1458,17 +1814,139 @@ function deleteProject(id){ if(!confirm('Eliminare questo progetto?'))return; DB
 function advanceStep(id){ const p=DB.projects.find(x=>x.id===id); if(!p||p.step>=6)return; p.step++; saveAndSync(); renderView(); }
 function setStep(id,s){ const p=DB.projects.find(x=>x.id===id); if(!p)return; p.step=s; saveAndSync(); renderView(); }
 function toggleTask(pid,i){ const p=DB.projects.find(x=>x.id===pid); p.tasks[i].done=!p.tasks[i].done; saveAndSync(); renderView(); }
-function removeTask(pid,i){ const p=DB.projects.find(x=>x.id===pid); p.tasks.splice(i,1); saveAndSync(); renderView(); }
+function removeTask(pid,i){
+  const p=DB.projects.find(x=>x.id===pid); const t=p.tasks[i];
+  if(gSignedIn&&t&&t._cal_id) deleteCalEvent(t._cal_id);
+  p.tasks.splice(i,1); saveAndSync(); renderView();
+}
 function saveNote(pid){ const p=DB.projects.find(x=>x.id===pid); const t=document.getElementById('nnote-'+pid)?.value.trim(); if(!t)return; p.note.push({text:t,date:new Date().toLocaleString('it-IT')}); saveAndSync(); renderView(); }
-function addVoce(pid){ const p=DB.projects.find(x=>x.id===pid); const d=document.getElementById('vd-'+pid)?.value.trim(); if(!d)return; p.voci.push({desc:d,qty:document.getElementById('vq-'+pid)?.value||1,price:document.getElementById('vp-'+pid)?.value||0}); saveAndSync(); renderView(); }
+
+// ── PREVENTIVO ─────────────────────────────────────────────
+function addVoce(pid){
+  const p=DB.projects.find(x=>x.id===pid);
+  const d=document.getElementById('vd-'+pid)?.value.trim(); if(!d)return;
+  if(!p.voci)p.voci=[];
+  p.voci.push({desc:d,qty:document.getElementById('vq-'+pid)?.value||1,price:document.getElementById('vp-'+pid)?.value||0,costo:document.getElementById('vc-'+pid)?.value||0});
+  saveAndSync(); renderView();
+}
 function removeVoce(pid,i){ const p=DB.projects.find(x=>x.id===pid); p.voci.splice(i,1); saveAndSync(); renderView(); }
-function snapPrev(pid,tot){ const p=DB.projects.find(x=>x.id===pid); p.preventivi.push({date:new Date().toLocaleDateString('it-IT'),totale:tot,stato:'inviato'}); saveAndSync(); renderView(); }
-function openAddActor(pid){ const el=document.getElementById('add-actor-form-'+pid); if(el) el.style.display=el.style.display==='none'?'':'none'; }
-function saveActorP(pid){ const p=DB.projects.find(x=>x.id===pid); const aid=document.getElementById('cas-sel-'+pid)?.value; const n=document.getElementById('cas-nome-'+pid)?.value.trim(); if(!aid&&!n){alert('Seleziona o inserisci un attore');return;} p.attori.push({actor_id:aid,nome_libero:n,ruolo:document.getElementById('cas-ruolo-'+pid)?.value.trim(),cachet:document.getElementById('cas-cachet-'+pid)?.value,diritti_status:document.getElementById('cas-dir-'+pid)?.value,diritti_scadenza:document.getElementById('cas-scad-'+pid)?.value}); saveAndSync(); renderView(); }
-function removeActorP(pid,i){ const p=DB.projects.find(x=>x.id===pid); p.attori.splice(i,1); saveAndSync(); renderView(); }
-function addFattura(pid){ const p=DB.projects.find(x=>x.id===pid); const num=prompt('Numero fattura:'); if(num===null)return; const desc=prompt('Descrizione:','Produzione audio'); const imp=prompt('Importo (€):'); if(!imp)return; p.fatture.push({numero:num,desc,importo:imp,date:new Date().toLocaleDateString('it-IT'),pagato:false}); saveAndSync(); renderView(); }
-function toggleFatt(pid,i){ const p=DB.projects.find(x=>x.id===pid); p.fatture[i].pagato=!p.fatture[i].pagato; saveAndSync(); renderView(); }
-function removeFatt(pid,i){ const p=DB.projects.find(x=>x.id===pid); p.fatture.splice(i,1); saveAndSync(); renderView(); }
+function addVoceConvocazione(pid){
+  const cachetStr=prompt('Cachet convocazione attore (€):','0'); if(cachetStr===null)return;
+  const cachet=parseFloat(cachetStr)||0;
+  const costoReale=cachet*(1+ENPALS_CONV);
+  const defPrezzo=Math.ceil(costoReale*1.35).toString();
+  const prezzoStr=prompt(`Prezzo al cliente (€):\nCosto reale attore con ENPALS ${Math.round(ENPALS_CONV*100)}% = €${costoReale.toFixed(2)}\nSuggerito: €${defPrezzo}`,defPrezzo);
+  if(prezzoStr===null)return;
+  const p=DB.projects.find(x=>x.id===pid);
+  p.voci.push({desc:'Convocazione Attore',qty:1,price:parseFloat(prezzoStr)||0,costo:costoReale,isConvocazione:true});
+  saveAndSync(); renderView(); toast(`🎙 Convocazione aggiunta — Margine: €${(parseFloat(prezzoStr||0)-costoReale).toFixed(2)}`);
+}
+function addVoceSuggerita(pid,desc){
+  const p=DB.projects.find(x=>x.id===pid);
+  p.voci.push({desc,qty:1,price:0,costo:0});
+  saveAndSync(); renderView();
+}
+function snapPrev(pid){
+  const p=DB.projects.find(x=>x.id===pid);
+  if(!p.voci||!p.voci.length){alert('Nessuna voce nel preventivo da salvare');return;}
+  const totRicavi=p.voci.reduce((s,v)=>(s+(parseFloat(v.qty)||1)*(parseFloat(v.price||0))),0);
+  const totCosto=p.voci.reduce((s,v)=>(s+(parseFloat(v.qty)||1)*(parseFloat(v.costo||0))),0);
+  p.preventivi.push({date:new Date().toLocaleDateString('it-IT'),totale:totRicavi,totale_costo:totCosto,stato:'inviato',voci:JSON.parse(JSON.stringify(p.voci))});
+  saveAndSync(); renderView(); toast(`📄 Snapshot salvato — ${p.voci.length} voci, totale €${totRicavi.toLocaleString('it-IT',{minimumFractionDigits:2})}`);
+}
+function changePrevStato(pid,i){
+  const p=DB.projects.find(x=>x.id===pid);
+  const stati=['inviato','approvato','rifiutato'];
+  const cur=p.preventivi[i].stato||'inviato';
+  p.preventivi[i].stato=stati[(stati.indexOf(cur)+1)%stati.length];
+  saveAndSync(); renderView();
+}
+
+// ── CASTING & DIRITTI ──────────────────────────────────────
+function toggleForm(id){ const el=document.getElementById(id); if(el) el.style.display=el.style.display==='none'?'block':'none'; }
+function saveCasting(pid){
+  const p=DB.projects.find(x=>x.id===pid);
+  const aid=document.getElementById('cast-sel-'+pid)?.value;
+  const act=aid?DB.actors.find(x=>x.id===aid):null;
+  const nome=act?act.nome+' '+act.cognome:(document.getElementById('cast-nome-'+pid)?.value.trim()||'');
+  if(!nome){alert('Inserisci un nome');return;}
+  if(!p.casting)p.casting=[];
+  p.casting.push({id:uid(),nome,data_invio:document.getElementById('cast-data-'+pid)?.value||'',note:document.getElementById('cast-note-'+pid)?.value.trim()||'',actor_id:aid||null});
+  saveAndSync(); renderView(); toast('✓ Proposta casting aggiunta');
+}
+function removeCasting(pid,i){ const p=DB.projects.find(x=>x.id===pid); p.casting.splice(i,1); saveAndSync(); renderView(); }
+function calcMargDir(pid){
+  const cachet=parseFloat(document.getElementById('dir-cachet-'+pid)?.value)||0;
+  const richiesto=parseFloat(document.getElementById('dir-richiesto-'+pid)?.value)||0;
+  const box=document.getElementById('dir-calc-box-'+pid); if(!box)return;
+  box.style.display=(cachet||richiesto)?'block':'none';
+  const costoReale=cachet*(1+ENPALS_DIRITTI);
+  const margine=richiesto-costoReale;
+  const margPct=richiesto?(margine/richiesto*100):0;
+  const cEl=document.getElementById('dir-costo-real-'+pid);
+  const mEl=document.getElementById('dir-marg-val-'+pid);
+  const pEl=document.getElementById('dir-marg-pct-'+pid);
+  if(cEl) cEl.textContent='€'+costoReale.toFixed(2);
+  if(mEl){ mEl.textContent='€'+margine.toFixed(2); mEl.style.color=margine>=0?'var(--green)':'var(--red)'; }
+  if(pEl){ pEl.textContent=margPct.toFixed(1)+'%'; pEl.style.color=margine>=0?'var(--green)':'var(--red)'; }
+}
+async function saveQuotDiritti(pid){
+  const p=DB.projects.find(x=>x.id===pid);
+  const nome=document.getElementById('dir-nome-'+pid)?.value.trim(); if(!nome){alert('Inserisci nome attore');return;}
+  const cachet=document.getElementById('dir-cachet-'+pid)?.value||0;
+  const richiesto=document.getElementById('dir-richiesto-'+pid)?.value||0;
+  const stato=document.getElementById('dir-stato-'+pid)?.value||'trattativa';
+  const scadenza=document.getElementById('dir-scad-'+pid)?.value||'';
+  const note=document.getElementById('dir-note-'+pid)?.value.trim()||'';
+  const q={id:uid(),nome_attore:nome,cachet,richiesto_cliente:richiesto,stato,scadenza,note};
+  if(gSignedIn&&stato==='approvata'&&scadenza){
+    q._cal_id=await upsertEvent(`⚠ DIRITTI: ${nome} — ${p.titolo}`,`Progetto: ${p.titolo}\n${note}`,scadenza,'6',null);
+  }
+  if(!p.quotazioni_diritti)p.quotazioni_diritti=[];
+  p.quotazioni_diritti.push(q);
+  saveAndSync(); renderView(); toast('✓ Quotazione diritti salvata');
+}
+function removeQuotDiritti(pid,i){
+  const p=DB.projects.find(x=>x.id===pid); const q=p.quotazioni_diritti[i];
+  if(gSignedIn&&q&&q._cal_id) deleteCalEvent(q._cal_id);
+  p.quotazioni_diritti.splice(i,1); saveAndSync(); renderView();
+}
+
+// ── FATTURE ────────────────────────────────────────────────
+let _fattModalPid=null,_fattModalIdx=null;
+function openFattModal(pid,idx){
+  _fattModalPid=pid; _fattModalIdx=idx;
+  const p=DB.projects.find(x=>x.id===pid);
+  const f=idx!==null&&idx!==undefined?p.fatture[idx]:null;
+  document.getElementById('fatt-num').value=f?f.numero||'':'';
+  document.getElementById('fatt-desc').value=f?f.desc||'Produzione audio pubblicitaria':'Produzione audio pubblicitaria';
+  document.getElementById('fatt-imp').value=f?f.importo||'':'';
+  document.getElementById('fatt-date').value=f?f.date_raw||'':new Date().toISOString().split('T')[0];
+  document.getElementById('fatt-stato').value=f?f.stato||'attesa':'attesa';
+  document.getElementById('fatt-sollecito').value=f?f.sollecito||'':'';
+  document.getElementById('fatt-note').value=f?f.note||'':'';
+  document.getElementById('modal-fatt-title').textContent=idx!==null&&idx!==undefined?'Modifica Fattura':'Nuova Fattura';
+  document.getElementById('modal-fattura').classList.remove('hidden');
+}
+function saveFattura(){
+  const imp=document.getElementById('fatt-imp').value; if(!imp){alert('Inserisci importo');return;}
+  const p=DB.projects.find(x=>x.id===_fattModalPid);
+  const dateRaw=document.getElementById('fatt-date').value;
+  const entry={numero:document.getElementById('fatt-num').value.trim(),desc:document.getElementById('fatt-desc').value.trim(),importo:imp,date:dateRaw?new Date(dateRaw).toLocaleDateString('it-IT'):'',date_raw:dateRaw,stato:document.getElementById('fatt-stato').value,sollecito:document.getElementById('fatt-sollecito').value,note:document.getElementById('fatt-note').value.trim()};
+  if(_fattModalIdx!==null&&_fattModalIdx!==undefined) p.fatture[_fattModalIdx]=entry;
+  else{ if(!p.fatture)p.fatture=[]; p.fatture.push(entry); }
+  saveAndSync(); document.getElementById('modal-fattura').classList.add('hidden'); renderView();
+  toast('✓ Fattura salvata');
+}
+function setFattStato(pid,i,stato){ const p=DB.projects.find(x=>x.id===pid); p.fatture[i].stato=stato; saveAndSync(); renderView(); }
+function removeFatt(pid,i){ if(!confirm('Eliminare fattura?'))return; const p=DB.projects.find(x=>x.id===pid); p.fatture.splice(i,1); saveAndSync(); renderView(); }
+// legacy compat
+function addFattura(pid){ openFattModal(pid,null); }
+function toggleFatt(pid,i){ const p=DB.projects.find(x=>x.id===pid); p.fatture[i].stato=p.fatture[i].stato==='pagata'?'attesa':'pagata'; saveAndSync(); renderView(); }
+function removeActorP(pid,i){ const p=DB.projects.find(x=>x.id===pid); if(p.attori)p.attori.splice(i,1); saveAndSync(); renderView(); }
+function openAddActor(pid){ toggleForm('add-actor-form-'+pid); }
+function saveActorP(pid){ const p=DB.projects.find(x=>x.id===pid); const aid=document.getElementById('cas-sel-'+pid)?.value; const n=document.getElementById('cas-nome-'+pid)?.value.trim(); if(!aid&&!n){alert('Seleziona o inserisci un attore');return;} if(!p.attori)p.attori=[]; p.attori.push({actor_id:aid,nome_libero:n,ruolo:document.getElementById('cas-ruolo-'+pid)?.value.trim(),cachet:document.getElementById('cas-cachet-'+pid)?.value,diritti_status:document.getElementById('cas-dir-'+pid)?.value,diritti_scadenza:document.getElementById('cas-scad-'+pid)?.value}); saveAndSync(); renderView(); }
+
 
 // ── INIT ───────────────────────────────────────────────────
 load();
